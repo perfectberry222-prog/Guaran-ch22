@@ -1,8 +1,29 @@
 import os
+import threading
+import time
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# 1. START COMMAND (French first)
+# --- DUMMY WEB SERVER TO KEEP RAILWAY ALIVE ---
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is online!")
+
+def start_webserver():
+    port = int(os.environ.get('PORT', 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    print(f"🌐 Keep-Alive server started on port {port} (Railway won't kill the bot)")
+    server.serve_forever()
+
+# Start the webserver in a background thread immediately
+thread = threading.Thread(target=start_webserver, daemon=True)
+thread.start()
+# -------------------------------------------------
+
+# 1. START COMMAND
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     language_keyboard = [
         [InlineKeyboardButton("Français", callback_data='FR'), 
@@ -11,13 +32,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(language_keyboard)
     
-    # Send logo
     try:
         await update.message.reply_photo(photo=open('logo.png', 'rb'))
     except Exception:
         pass
 
-    # Send French text
     await update.message.reply_text(
         "👋 Bienvenue sur Guaraná.ch\nChoisis ta langue pour accéder au catalogue :",
         reply_markup=reply_markup
@@ -28,15 +47,13 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # --- FIXED THE URL HERE ---
     main_menu_keyboard = [
-        [InlineKeyboardButton("🛍️ Open shop", url="https://example.com")], # Fixed placeholder
+        [InlineKeyboardButton("🛍️ Open shop", url="https://example.com")], # CHANGE LATER
         [InlineKeyboardButton("📞 Contact us", url="https://t.me/FavelaTerpsPackz")]
     ]
     reply_markup = InlineKeyboardMarkup(main_menu_keyboard)
     
     if query.data == 'EN':
-        # Send as NEW message (Better than editing old message)
         await query.message.reply_text(
             text="🤗 Welcome to Guaraná.ch!\nThanks for your trust – order quickly via the shop 👇",
             reply_markup=reply_markup
@@ -61,7 +78,6 @@ if __name__ == '__main__':
         exit(1)
         
     application = ApplicationBuilder().token(TOKEN).build()
-    
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CallbackQueryHandler(button_click))
     
