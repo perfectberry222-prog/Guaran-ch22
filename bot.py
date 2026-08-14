@@ -1,6 +1,6 @@
 import os
+import asyncio
 import threading
-import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -15,7 +15,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 def start_webserver():
     port = int(os.environ.get('PORT', 8080))
     server = HTTPServer(('0.0.0.0', port), HealthHandler)
-    print(f"🌐 Keep-Alive server started on port {port} (Railway won't kill the bot)")
+    print(f"🌐 Keep-Alive server started on port {port}")
     server.serve_forever()
 
 # Start the webserver in a background thread immediately
@@ -69,17 +69,36 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
 
-# 3. START THE BOT
-if __name__ == '__main__':
+# 3. MAIN ASYNC FUNCTION (Never blocks Railway)
+async def main():
     TOKEN = os.environ.get('TELEGRAM_TOKEN')
-    
     if not TOKEN:
         print("Error: TELEGRAM_TOKEN environment variable not set!")
-        exit(1)
+        return
         
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CallbackQueryHandler(button_click))
     
+    await application.initialize()
+    
+    # Kill stale webhooks
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    
+    # Start polling safely
+    await application.updater.start_polling()
     print("✅ Bot is running! Go to Telegram and type /start")
-    application.run_polling()
+    
+    # Keep the bot alive infinitely without blocking
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await application.updater.stop()
+        await application.shutdown()
+
+# 4. RUN THE BOT
+if __name__ == '__main__':
+    asyncio.run(main())
