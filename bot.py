@@ -98,22 +98,32 @@ def webhook():
 def health():
     return "Bot is alive!", 200
 
-# 5. ASYNC STARTUP (ALL IN ONE FUNCTION)
+# 5. SMART STARTUP LOGIC (Fixes the 127.0.0.1 error)
 async def startup():
     print("🔄 Clearing ghost connections...")
     await application.bot.delete_webhook(drop_pending_updates=True)
     await application.initialize()
     
-    # Set webhook
-    railway_url = f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'localhost')}"
-    await application.bot.set_webhook(url=f"{railway_url}/{TOKEN}")
+    # Try to get the Railway Public Domain
+    railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN')
     
-    print(f"✅ Webhook set to: {railway_url}/{TOKEN}")
+    if railway_url:
+        # We have a valid public URL! Use Webhooks.
+        full_url = f"https://{railway_url}/{TOKEN}"
+        print(f"🌐 Found public domain: {full_url}")
+        await application.bot.set_webhook(url=full_url)
+        print("✅ Webhook set successfully!")
+    else:
+        # No public URL found. Fallback to Polling (No 127.0.0.1 crash!)
+        print("⚠️ No public domain found. Falling back to Polling...")
+        await application.updater.start_polling()
+        print("✅ Polling started successfully!")
+        
     print("✅ Bot is live! Go to Telegram and type /start")
 
 if __name__ == '__main__':
     # RUN ASYNC STARTUP FIRST
     asyncio.run(startup())
     
-    # THEN RUN FLASK (This prevents the 'Event loop is closed' crash!)
+    # THEN RUN FLASK (Keeps Railway alive)
     app.run(host="0.0.0.0", port=PORT)
