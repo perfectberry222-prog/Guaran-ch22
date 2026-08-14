@@ -1,7 +1,7 @@
 import os
 import asyncio
 import threading
-from aiohttp import web
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -77,18 +77,17 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
 
-# 4. HEARTBEAT WEB SERVER (Keeps Railway network open)
-async def handle_health(request):
-    return web.Response(text="Bot is alive!")
+# 4. BUILT-IN HEARTBEAT SERVER (Keeps Railway network open, no external libraries)
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
 
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/', handle_health)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
-    await site.start()
+def start_web_server():
+    server = HTTPServer(('0.0.0.0', PORT), HealthHandler)
     print(f"🌐 Heartbeat server running on port {PORT} (Network active)")
+    server.serve_forever()
 
 # 5. MAIN EXECUTION
 async def main():
@@ -98,8 +97,9 @@ async def main():
     
     await app.initialize()
     
-    # Start heartbeat server to force network connection
-    await start_web_server()
+    # Run the heartbeat web server in a background thread
+    thread = threading.Thread(target=start_web_server, daemon=True)
+    thread.start()
     
     print("📡 Starting polling...")
     await app.updater.start_polling()
