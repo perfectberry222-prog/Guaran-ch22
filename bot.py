@@ -1,11 +1,13 @@
 import os
-import asyncio
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import logging
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 
-# 1. GET TOKEN
+# SETUP LOGGING
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# 1. GET TOKEN & PORT
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 PORT = int(os.environ.get('PORT', 8080))
 
@@ -13,10 +15,12 @@ if not TOKEN:
     print("❌ ERROR: TELEGRAM_TOKEN environment variable is missing!")
     exit(1)
 
-print("🤖 Starting Guaraná.ch Bot...")
+print("🤖 Starting Guaraná.ch Bot using Flask...")
 
-# 2. START COMMAND
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 2. BUILD APPLICATION
+application = ApplicationBuilder().token(TOKEN).build()
+
+async def start(update: Update, context):
     language_keyboard = [
         [InlineKeyboardButton("Français", callback_data='FR'), 
          InlineKeyboardButton("English", callback_data='EN'), 
@@ -35,8 +39,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# 3. HANDLE BUTTON CLICKS
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_click(update: Update, context):
     query = update.callback_query
     await query.answer() 
 
@@ -77,41 +80,40 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
 
-# 4. BUILT-IN HEARTBEAT SERVER (Keeps Railway network open, no external libraries)
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is alive!")
+# 3. ADD HANDLERS
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CallbackQueryHandler(button_click))
 
-def start_web_server():
-    server = HTTPServer(('0.0.0.0', PORT), HealthHandler)
-    print(f"🌐 Heartbeat server running on port {PORT} (Network active)")
-    server.serve_forever()
+# 4. CREATE FLASK APP
+app = Flask(__name__)
 
-# 5. MAIN EXECUTION
-async def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_click))
-    
-    await app.initialize()
-    
-    # Run the heartbeat web server in a background thread
-    thread = threading.Thread(target=start_web_server, daemon=True)
-    thread.start()
-    
-    print("📡 Starting polling...")
-    await app.updater.start_polling()
-    print("✅ Bot is running! Go to Telegram and type /start")
-    
-    try:
-        await asyncio.Future()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        await app.updater.stop()
-        await app.shutdown()
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(), application.bot)
+    application.process_update(update)
+    return "OK", 200
 
+@app.route("/", methods=["GET"])
+def health():
+    return "Bot is alive!", 200
+
+# 5. STARTUP
 if __name__ == '__main__':
-    asyncio.run(main())
+    import asyncio
+    
+    # Kill ghost connections
+    print("🔄 Clearing ghost connections...")
+    asyncio.run(application.bot.delete_webhook(drop_pending_updates=True))
+    
+    # Initialize bot
+    asyncio.run(application.initialize())
+    
+    # Set webhook to Railway's public URL
+    railway_url = f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'localhost')}"
+    asyncio.run(application.bot.set_webhook(url=f"{railway_url}/{TOKEN}"))
+    
+    print(f"✅ Webhook set to: {railway_url}/{TOKEN}")
+    print("✅ Bot is live! Go to Telegram and type /start")
+    
+    # Run Flask (No more getUpdates conflicts!)
+    app.run(host="0.0.0.0", port=PORT)
