@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -97,23 +98,22 @@ def webhook():
 def health():
     return "Bot is alive!", 200
 
-# 5. STARTUP
-if __name__ == '__main__':
-    import asyncio
-    
-    # Kill ghost connections
+# 5. ASYNC STARTUP (ALL IN ONE FUNCTION)
+async def startup():
     print("🔄 Clearing ghost connections...")
-    asyncio.run(application.bot.delete_webhook(drop_pending_updates=True))
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    await application.initialize()
     
-    # Initialize bot
-    asyncio.run(application.initialize())
-    
-    # Set webhook to Railway's public URL
+    # Set webhook
     railway_url = f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'localhost')}"
-    asyncio.run(application.bot.set_webhook(url=f"{railway_url}/{TOKEN}"))
+    await application.bot.set_webhook(url=f"{railway_url}/{TOKEN}")
     
     print(f"✅ Webhook set to: {railway_url}/{TOKEN}")
     print("✅ Bot is live! Go to Telegram and type /start")
+
+if __name__ == '__main__':
+    # RUN ASYNC STARTUP FIRST
+    asyncio.run(startup())
     
-    # Run Flask (No more getUpdates conflicts!)
+    # THEN RUN FLASK (This prevents the 'Event loop is closed' crash!)
     app.run(host="0.0.0.0", port=PORT)
