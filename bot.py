@@ -1,10 +1,13 @@
 import os
 import asyncio
+import threading
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# 1. GET TOKEN FROM RAILWAY ENVIRONMENT VARIABLE
+# 1. GET TOKEN
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
+PORT = int(os.environ.get('PORT', 8080))
 
 if not TOKEN:
     print("❌ ERROR: TELEGRAM_TOKEN environment variable is missing!")
@@ -74,13 +77,29 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
 
-# 4. MAIN EXECUTION
+# 4. HEARTBEAT WEB SERVER (Keeps Railway network open)
+async def handle_health(request):
+    return web.Response(text="Bot is alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    print(f"🌐 Heartbeat server running on port {PORT} (Network active)")
+
+# 5. MAIN EXECUTION
 async def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_click))
     
     await app.initialize()
+    
+    # Start heartbeat server to force network connection
+    await start_web_server()
     
     print("📡 Starting polling...")
     await app.updater.start_polling()
