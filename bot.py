@@ -1,14 +1,30 @@
 import os
 import asyncio
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# --- PASTE YOUR TOKEN HERE ---
-TOKEN = "8848851165:AAGptx8dtWh3q90z4KgkdEn731zHAGCpk2g"
-# -----------------------------
+# 1. GET TOKEN FROM RAILWAY ENVIRONMENT VARIABLE
+TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
-print("🤖 Starting Guaraná.ch Bot locally...")
+if not TOKEN:
+    print("❌ ERROR: TELEGRAM_TOKEN environment variable is missing on Railway!")
+    exit(1)
 
+print("🤖 Starting Guaraná.ch Bot...")
+
+# 2. NUCLEAR DISCONNECT (Kills ghost bots before starting)
+print("💥 Attempting NUCLEAR disconnect via HTTP...")
+try:
+    url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true"
+    response = requests.get(url)
+    print(f"📡 Telegram Response: {response.json()}")
+except Exception as e:
+    print(f"⚠️ Disconnect warning: {e}")
+
+print("✅ Ghost connections forcibly killed. Starting bot now...")
+
+# 3. START COMMAND
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     language_keyboard = [
         [InlineKeyboardButton("Français", callback_data='FR'), 
@@ -28,6 +44,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
+# 4. HANDLE BUTTON CLICKS
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer() 
@@ -69,16 +86,17 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
 
+# 5. MAIN EXECUTION
 async def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_click))
-    await app.initialize()
-    await app.bot.delete_webhook(drop_pending_updates=True)
     
-    print("✅ Clearing ghost connections...")
+    await app.initialize()
+    
+    print("📡 Starting polling...")
     await app.updater.start_polling()
-    print("✅ Bot is running locally! Go to Telegram and type /start")
+    print("✅ Bot is successfully running and waiting for users!")
     
     try:
         await asyncio.Future()
