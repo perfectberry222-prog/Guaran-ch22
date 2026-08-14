@@ -1,30 +1,27 @@
 import os
-import asyncio
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import logging
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 
-# --- DUMMY WEB SERVER TO KEEP RAILWAY ALIVE ---
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is online!")
+# Setup Logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-def start_webserver():
-    port = int(os.environ.get('PORT', 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthHandler)
-    print(f"🌐 Keep-Alive server started on port {port}")
-    server.serve_forever()
+# 1. GET TOKEN & PORT
+TOKEN = os.environ.get('TELEGRAM_TOKEN')
+PORT = int(os.environ.get('PORT', 8080))
 
-# Start the webserver in a background thread immediately
-thread = threading.Thread(target=start_webserver, daemon=True)
-thread.start()
-# -------------------------------------------------
+if not TOKEN:
+    print("❌ ERROR: TELEGRAM_TOKEN environment variable is missing!")
+    exit(1)
 
-# 1. START COMMAND
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+print("🤖 Starting Guaraná.ch Bot using Flask Webhook...")
+
+# 2. BUILD APPLICATION
+application = ApplicationBuilder().token(TOKEN).build()
+
+# START COMMAND
+async def start(update: Update, context):
     language_keyboard = [
         [InlineKeyboardButton("Français", callback_data='FR'), 
          InlineKeyboardButton("English", callback_data='EN'), 
@@ -33,7 +30,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(language_keyboard)
     
     try:
-        await update.message.reply_photo(photo=open('logo.png', 'rb'))
+        with open('logo.png', 'rb') as photo:
+            await update.message.reply_photo(photo=photo)
     except Exception:
         pass
 
@@ -42,65 +40,82 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# 2. HANDLE BUTTON CLICKS
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# HANDLE BUTTON CLICKS
+async def button_click(update: Update, context):
     query = update.callback_query
-    await query.answer()
-    
+    await query.answer() 
+
     main_menu_keyboard = [
         [InlineKeyboardButton("🛍️ Open shop", url="https://example.com")], 
         [InlineKeyboardButton("📞 Contact us", url="https://t.me/FavelaTerpsPackz")]
     ]
     reply_markup = InlineKeyboardMarkup(main_menu_keyboard)
-    
+
     if query.data == 'EN':
-        # --- NEW LINES ADDED HERE TO SHOW THE IMAGE ---
         try:
-            await query.message.reply_photo(photo=open('logo.png', 'rb'))
+            with open('logo.png', 'rb') as photo:
+                await query.message.reply_photo(photo=photo)
         except Exception:
             pass
-        # ----------------------------------------------
-        
         await query.message.reply_text(
             text="🤗 Welcome to Guaraná.ch!\nThanks for your trust – order quickly via the shop 👇",
             reply_markup=reply_markup
         )
     elif query.data == 'FR':
+        try:
+            with open('logo.png', 'rb') as photo:
+                await query.message.reply_photo(photo=photo)
+        except Exception:
+            pass
         await query.message.reply_text(
             text="🤗 Bienvenue sur Guaraná.ch!\nMerci de votre confiance – commandez rapidement via la boutique 👇",
             reply_markup=reply_markup
         )
     elif query.data == 'DE':
+        try:
+            with open('logo.png', 'rb') as photo:
+                await query.message.reply_photo(photo=photo)
+        except Exception:
+            pass
         await query.message.reply_text(
             text="🤗 Willkommen bei Guaraná.ch!\nDanke für dein Vertrauen – bestelle schnell über den Shop 👇",
             reply_markup=reply_markup
         )
 
-# 3. MAIN ASYNC FUNCTION
-async def main():
-    TOKEN = os.environ.get('TELEGRAM_TOKEN')
-    if not TOKEN:
-        print("Error: TELEGRAM_TOKEN environment variable not set!")
-        return
-        
-    application = ApplicationBuilder().token(TOKEN).build()
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(CallbackQueryHandler(button_click))
-    
-    await application.initialize()
-    await application.bot.delete_webhook(drop_pending_updates=True)
-    await application.updater.start_polling()
-    print("✅ Bot is running! Go to Telegram and type /start")
-    
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        await application.updater.stop()
-        await application.shutdown()
+# 3. ADD HANDLERS
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CallbackQueryHandler(button_click))
 
-# 4. RUN THE BOT
+# 4. CREATE FLASK APP
+app = Flask(__name__)
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(), application.bot)
+    application.process_update(update)
+    return "OK", 200
+
+@app.route("/", methods=["GET"])
+def health():
+    return "Bot is alive!", 200
+
+# 5. STARTUP
 if __name__ == '__main__':
-    asyncio.run(main())
+    import asyncio
+    
+    # Force disconnect any ghosts
+    print("🔄 Nuking all ghost connections...")
+    asyncio.run(application.bot.delete_webhook(drop_pending_updates=True))
+    
+    # Initialize bot
+    asyncio.run(application.initialize())
+    
+    # Set webhook to Railway's public URL
+    railway_url = f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'localhost')}"
+    asyncio.run(application.bot.set_webhook(url=f"{railway_url}/{TOKEN}"))
+    
+    print(f"✅ Webhook set to: {railway_url}/{TOKEN}")
+    print("✅ Bot is live! Go to Telegram and type /start")
+    
+    # Run Flask (No polling, ZERO conflicts!)
+    app.run(host="0.0.0.0", port=PORT)
