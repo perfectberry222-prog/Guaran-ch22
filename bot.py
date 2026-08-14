@@ -1,24 +1,38 @@
 import os
-import asyncio
-from quart import Quart, request
+import sys
+import time
+import threading
+import random
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# 1. GET TOKEN & PORT
-TOKEN = os.environ.get('TELEGRAM_TOKEN')
-PORT = int(os.environ.get('PORT', 8080))
+# --- CRASH PREVENTION LOCK ---
+# If the bot restarts too fast, Railway is stuck in a loop.
+# This forces the bot to wait a random time before starting to clear ghost processes.
+time.sleep(random.randint(3, 8))
+print("🚀 Starting up...")
 
-if not TOKEN:
-    print("❌ ERROR: TELEGRAM_TOKEN environment variable is missing!")
-    exit(1)
+# --- DUMMY WEB SERVER TO KEEP RAILWAY ALIVE ---
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is online!")
 
-print("🤖 Starting Guaraná.ch Bot using Quart Webhook...")
+def start_webserver():
+    port = int(os.environ.get('PORT', 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    print(f"🌐 Keep-Alive server started on port {port}")
+    server.serve_forever()
 
-# 2. BUILD APPLICATION
-application = ApplicationBuilder().token(TOKEN).build()
+# Start the webserver in a background thread immediately
+thread = threading.Thread(target=start_webserver, daemon=True)
+thread.start()
+# -------------------------------------------------
 
-# START COMMAND
-async def start(update: Update, context):
+# 1. START COMMAND
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     language_keyboard = [
         [InlineKeyboardButton("Français", callback_data='FR'), 
          InlineKeyboardButton("English", callback_data='EN'), 
@@ -27,8 +41,7 @@ async def start(update: Update, context):
     reply_markup = InlineKeyboardMarkup(language_keyboard)
     
     try:
-        with open('logo.png', 'rb') as photo:
-            await update.message.reply_photo(photo=photo)
+        await update.message.reply_photo(photo=open('logo.png', 'rb'))
     except Exception:
         pass
 
@@ -37,31 +50,32 @@ async def start(update: Update, context):
         reply_markup=reply_markup
     )
 
-# HANDLE BUTTON CLICKS
-async def button_click(update: Update, context):
+# 2. HANDLE BUTTON CLICKS
+async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() 
-
+    await query.answer()
+    
     main_menu_keyboard = [
         [InlineKeyboardButton("🛍️ Open shop", url="https://example.com")], 
         [InlineKeyboardButton("📞 Contact us", url="https://t.me/FavelaTerpsPackz")]
     ]
     reply_markup = InlineKeyboardMarkup(main_menu_keyboard)
-
+    
     if query.data == 'EN':
+        # ------- IMAGE ADDED HERE FOR ENGLISH -------
         try:
-            with open('logo.png', 'rb') as photo:
-                await query.message.reply_photo(photo=photo)
+            await query.message.reply_photo(photo=open('logo.png', 'rb'))
         except Exception:
             pass
+        # -------------------------------------------
+        
         await query.message.reply_text(
             text="🤗 Welcome to Guaraná.ch!\nThanks for your trust – order quickly via the shop 👇",
             reply_markup=reply_markup
         )
     elif query.data == 'FR':
         try:
-            with open('logo.png', 'rb') as photo:
-                await query.message.reply_photo(photo=photo)
+            await query.message.reply_photo(photo=open('logo.png', 'rb'))
         except Exception:
             pass
         await query.message.reply_text(
@@ -70,8 +84,7 @@ async def button_click(update: Update, context):
         )
     elif query.data == 'DE':
         try:
-            with open('logo.png', 'rb') as photo:
-                await query.message.reply_photo(photo=photo)
+            await query.message.reply_photo(photo=open('logo.png', 'rb'))
         except Exception:
             pass
         await query.message.reply_text(
@@ -79,50 +92,35 @@ async def button_click(update: Update, context):
             reply_markup=reply_markup
         )
 
-# 3. ADD HANDLERS
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(button_click))
-
-# 4. CREATE QUART APP (Async compatible!)
-app = Quart(__name__)
-
-@app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
-    update = Update.de_json(await request.get_json(), application.bot)
-    application.process_update(update)
-    return "OK", 200
-
-@app.route("/", methods=["GET"])
-async def health():
-    return "Bot is alive!", 200
-
-# 5. STARTUP
-if __name__ == '__main__':
-    async def startup_tasks():
-        # Force disconnect
-        print("🔄 Nuking all ghost connections...")
-        await application.bot.delete_webhook(drop_pending_updates=True)
+# 3. MAIN ASYNC FUNCTION
+async def main():
+    TOKEN = os.environ.get('TELEGRAM_TOKEN')
+    if not TOKEN:
+        print("Error: TELEGRAM_TOKEN environment variable not set!")
+        return
         
-        # Initialize bot
-        await application.initialize()
-        
-        # Set webhook
-        railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', None)
-        if railway_url:
-            full_url = f"https://{railway_url}/{TOKEN}"
-        else:
-            print("⚠️ WARNING: RAILWAY_PUBLIC_DOMAIN not set! Using default.")
-            full_url = f"https://localhost/{TOKEN}"
-            
-        await application.bot.set_webhook(url=full_url)
-        
-        print(f"✅ Webhook set to: {full_url}")
-        print("✅ Bot is live! Go to Telegram and type /start")
-
-    # Run the async setup, then start Quart
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(startup_tasks())
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CallbackQueryHandler(button_click))
     
-    # Run Quart (This doesn't close the loop like Flask does!)
-    app.run(host="0.0.0.0", port=PORT, loop=loop)
+    await application.initialize()
+    
+    # Force kill stale webhooks before polling starts
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    
+    await application.updater.start_polling()
+    print("✅ Bot is running! Go to Telegram and type /start")
+    
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await application.updater.stop()
+        await application.shutdown()
+
+# 4. RUN THE BOT
+if __name__ == '__main__':
+    import asyncio
+    asyncio.run(main())
