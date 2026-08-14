@@ -48,12 +48,19 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     main_menu_keyboard = [
-        [InlineKeyboardButton("🛍️ Open shop", url="https://example.com")], # CHANGE LATER
+        [InlineKeyboardButton("🛍️ Open shop", url="https://example.com")], 
         [InlineKeyboardButton("📞 Contact us", url="https://t.me/FavelaTerpsPackz")]
     ]
     reply_markup = InlineKeyboardMarkup(main_menu_keyboard)
     
     if query.data == 'EN':
+        # --- NEW LINES ADDED HERE TO SHOW THE IMAGE ---
+        try:
+            await query.message.reply_photo(photo=open('logo.png', 'rb'))
+        except Exception:
+            pass
+        # ----------------------------------------------
+        
         await query.message.reply_text(
             text="🤗 Welcome to Guaraná.ch!\nThanks for your trust – order quickly via the shop 👇",
             reply_markup=reply_markup
@@ -69,7 +76,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
 
-# 3. MAIN ASYNC FUNCTION (Never blocks Railway)
+# 3. MAIN ASYNC FUNCTION
 async def main():
     TOKEN = os.environ.get('TELEGRAM_TOKEN')
     if not TOKEN:
@@ -81,15 +88,10 @@ async def main():
     application.add_handler(CallbackQueryHandler(button_click))
     
     await application.initialize()
-    
-    # Kill stale webhooks
     await application.bot.delete_webhook(drop_pending_updates=True)
-    
-    # Start polling safely
     await application.updater.start_polling()
     print("✅ Bot is running! Go to Telegram and type /start")
     
-    # Keep the bot alive infinitely without blocking
     try:
         while True:
             await asyncio.sleep(3600)
