@@ -3,15 +3,26 @@ import sys
 import time
 import threading
 import random
+import socket
+import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# --- CRASH PREVENTION LOCK ---
-# If the bot restarts too fast, Railway is stuck in a loop.
-# This forces the bot to wait a random time before starting to clear ghost processes.
-time.sleep(random.randint(3, 8))
-print("🚀 Starting up...")
+# --- BRUTE FORCE KILL ---
+# This forces the bot to wait 8 seconds and forcefully kills any ghost connections
+# before Telegram even sees the new bot.
+print("🛑 Force-killing old ghost connections...")
+time.sleep(8)
+
+try:
+    TOKEN = os.environ.get('TELEGRAM_TOKEN')
+    if TOKEN:
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true")
+        print("✅ Ghost connections manually destroyed.")
+except Exception:
+    pass
+# ------------------------
 
 # --- DUMMY WEB SERVER TO KEEP RAILWAY ALIVE ---
 class HealthHandler(BaseHTTPRequestHandler):
@@ -30,6 +41,8 @@ def start_webserver():
 thread = threading.Thread(target=start_webserver, daemon=True)
 thread.start()
 # -------------------------------------------------
+
+print("🚀 Starting up...")
 
 # 1. START COMMAND
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -62,13 +75,10 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(main_menu_keyboard)
     
     if query.data == 'EN':
-        # ------- IMAGE ADDED HERE FOR ENGLISH -------
         try:
             await query.message.reply_photo(photo=open('logo.png', 'rb'))
         except Exception:
             pass
-        # -------------------------------------------
-        
         await query.message.reply_text(
             text="🤗 Welcome to Guaraná.ch!\nThanks for your trust – order quickly via the shop 👇",
             reply_markup=reply_markup
@@ -105,7 +115,7 @@ async def main():
     
     await application.initialize()
     
-    # Force kill stale webhooks before polling starts
+    # Final safety net
     await application.bot.delete_webhook(drop_pending_updates=True)
     
     await application.updater.start_polling()
